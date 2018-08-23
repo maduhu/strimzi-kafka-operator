@@ -34,6 +34,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -126,7 +127,7 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
         return null;
     }
 
-    private final void reconcileClusterCa(Reconciliation reconciliation, Labels labels, Handler<AsyncResult<Void>> handler) {
+    private final void reconcileClusterCa(Reconciliation reconciliation, Labels labels, T cr, Handler<AsyncResult<Void>> handler) {
         vertx.createSharedWorkerExecutor("kubernetes-ops-pool").executeBlocking(
             future -> {
                 String clusterCaName = AbstractModel.getClusterCaName(reconciliation.name());
@@ -146,7 +147,7 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
                         sbj.setOrganizationName("io.strimzi");
                         sbj.setCommonName("cluster-ca");
 
-                        certManager.generateSelfSignedCert(clusterCAkeyFile, clusterCAcertFile, sbj, CERTS_EXPIRATION_DAYS);
+                        generateClusterCa(cr, clusterCAkeyFile, clusterCAcertFile, sbj);
 
                         secret = secretCertProvider.createSecret(reconciliation.namespace(), clusterCaName,
                                 "cluster-ca.key", "cluster-ca.crt",
@@ -177,6 +178,8 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
             }
         );
     }
+
+    protected abstract void generateClusterCa(T cr, File clusterCAkeyFile, File clusterCAcertFile, Subject sbj) throws IOException;
 
     private final void deleteClusterCa(Reconciliation reconciliation, Handler<AsyncResult<Void>> handler) {
         vertx.createSharedWorkerExecutor("kubernetes-ops-pool").executeBlocking(
@@ -227,7 +230,7 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
                     if (cr != null) {
                         log.info("{}: Assembly {} should be created or updated", reconciliation, assemblyName);
                         Labels caLabels = Labels.userLabels(cr.getMetadata().getLabels()).withKind(reconciliation.type().toString()).withCluster(reconciliation.name());
-                        reconcileClusterCa(reconciliation, caLabels, certResult -> {
+                        reconcileClusterCa(reconciliation, caLabels, cr, certResult -> {
 
                             Labels labels = Labels.forCluster(assemblyName);
                             List<Secret> secrets = secretOperations.list(namespace, labels);

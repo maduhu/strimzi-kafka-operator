@@ -154,7 +154,8 @@ public class KafkaUserModel {
                 userSubject.setCommonName(name);
 
                 certManager.generateCsr(userKeyFile, userCsrFile, userSubject);
-                certManager.generateCert(userCsrFile, caCertAndKey.key(), caCertAndKey.cert(), userCrtFile, userSubject, CERTS_EXPIRATION_DAYS);
+                certManager.generateCert(userCsrFile, caCertAndKey.key(), caCertAndKey.cert(), userCrtFile,
+                        userSubject, CERTS_EXPIRATION_DAYS);
                 this.userCertAndKey = new CertAndKey(Files.readAllBytes(userKeyFile.toPath()), Files.readAllBytes(userCrtFile.toPath()));
 
                 if (!userCsrFile.delete()) {

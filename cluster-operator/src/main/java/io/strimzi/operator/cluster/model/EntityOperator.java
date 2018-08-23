@@ -148,7 +148,7 @@ public class EntityOperator extends AbstractModel {
             result.setUserOperator(EntityUserOperator.fromCrd(kafkaAssembly));
             result.setDeployed(result.getTopicOperator() != null || result.getUserOperator() != null);
             if (result.isDeployed()) {
-                result.generateCertificates(certManager, secrets);
+                result.generateCertificates(certManager, kafkaAssembly, secrets);
             }
         }
         return result;
@@ -160,7 +160,7 @@ public class EntityOperator extends AbstractModel {
      * @param certManager CertManager instance for handling certificates creation
      * @param secrets The Secrets storing certificates
      */
-    public void generateCertificates(CertManager certManager, List<Secret> secrets) {
+    public void generateCertificates(CertManager certManager, Kafka kafka, List<Secret> secrets) {
         log.debug("Generating certificates");
 
         try {
@@ -185,7 +185,8 @@ public class EntityOperator extends AbstractModel {
                     sbj.setCommonName(EntityOperator.entityOperatorName(cluster));
 
                     certManager.generateCsr(keyFile, csrFile, sbj);
-                    certManager.generateCert(csrFile, clusterCA.key(), clusterCA.cert(), certFile, CERTS_EXPIRATION_DAYS);
+                    certManager.generateCert(csrFile, clusterCA.key(), clusterCA.cert(),
+                            certFile, ModelUtils.getCertificateValidity(kafka));
 
                     cert = new CertAndKey(Files.readAllBytes(keyFile.toPath()), Files.readAllBytes(certFile.toPath()));
                 } else {

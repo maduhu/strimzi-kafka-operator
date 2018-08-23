@@ -232,7 +232,7 @@ public class KafkaCluster extends AbstractModel {
         result.setResources(kafkaClusterSpec.getResources());
         result.setTolerations(kafkaClusterSpec.getTolerations());
 
-        result.generateCertificates(certManager, secrets);
+        result.generateCertificates(certManager, kafkaAssembly, secrets);
         result.setTlsSidecar(kafkaClusterSpec.getTlsSidecar());
 
         result.setListeners(kafkaClusterSpec.getListeners());
@@ -243,11 +243,11 @@ public class KafkaCluster extends AbstractModel {
 
     /**
      * Manage certificates generation based on those already present in the Secrets
-     *
      * @param certManager CertManager instance for handling certificates creation
+     * @param kafka The kafka CR
      * @param secrets The Secrets storing certificates
      */
-    public void generateCertificates(CertManager certManager, List<Secret> secrets) {
+    public void generateCertificates(CertManager certManager, Kafka kafka, List<Secret> secrets) {
         log.debug("Generating certificates");
 
         try {
@@ -270,7 +270,7 @@ public class KafkaCluster extends AbstractModel {
                     sbj.setOrganizationName("io.strimzi");
                     sbj.setCommonName("kafka-clients-ca");
 
-                    certManager.generateSelfSignedCert(clientsCAkeyFile, clientsCAcertFile, sbj, CERTS_EXPIRATION_DAYS);
+                    certManager.generateSelfSignedCert(clientsCAkeyFile, clientsCAcertFile, sbj, ModelUtils.getCertificateValidity(kafka));
                     clientsCA =
                             new CertAndKey(Files.readAllBytes(clientsCAkeyFile.toPath()), Files.readAllBytes(clientsCAcertFile.toPath()));
                     if (!clientsCAkeyFile.delete()) {
@@ -293,7 +293,8 @@ public class KafkaCluster extends AbstractModel {
                 int replicasInternalSecret = !clusterSecret.isPresent() ? 0 : (clusterSecret.get().getData().size() - 1) / 2;
 
                 log.debug("Internal communication certificates");
-                brokerCerts = maybeCopyOrGenerateCerts(certManager, clusterSecret, replicasInternalSecret, clusterCA, KafkaCluster::kafkaPodName);
+                brokerCerts = maybeCopyOrGenerateCerts(certManager, kafka, clusterSecret, replicasInternalSecret,
+                        clusterCA, KafkaCluster::kafkaPodName);
             } else {
                 throw new NoCertificateSecretException("The cluster CA certificate Secret is missing");
             }

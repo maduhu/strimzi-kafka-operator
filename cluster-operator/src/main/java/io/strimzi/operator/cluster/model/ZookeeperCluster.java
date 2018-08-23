@@ -176,7 +176,7 @@ public class ZookeeperCluster extends AbstractModel {
         zk.setJvmOptions(zookeeperClusterSpec.getJvmOptions());
         zk.setUserAffinity(zookeeperClusterSpec.getAffinity());
         zk.setTolerations(zookeeperClusterSpec.getTolerations());
-        zk.generateCertificates(certManager, secrets);
+        zk.generateCertificates(certManager, kafkaAssembly, secrets);
         zk.setTlsSidecar(zookeeperClusterSpec.getTlsSidecar());
         return zk;
     }
@@ -187,7 +187,7 @@ public class ZookeeperCluster extends AbstractModel {
      * @param certManager CertManager instance for handling certificates creation
      * @param secrets The Secrets storing certificates
      */
-    public void generateCertificates(CertManager certManager, List<Secret> secrets) {
+    public void generateCertificates(CertManager certManager, Kafka kafka, List<Secret> secrets) {
         log.debug("Generating certificates");
 
         try {
@@ -207,7 +207,7 @@ public class ZookeeperCluster extends AbstractModel {
                 int replicasSecret = !nodesSecret.isPresent() ? 0 : (nodesSecret.get().getData().size() - 1) / 2;
 
                 log.debug("Cluster communication certificates");
-                certs = maybeCopyOrGenerateCerts(certManager, nodesSecret, replicasSecret, clusterCA, ZookeeperCluster::zookeeperPodName);
+                certs = maybeCopyOrGenerateCerts(certManager, kafka, nodesSecret, replicasSecret, clusterCA, ZookeeperCluster::zookeeperPodName);
             } else {
                 throw new NoCertificateSecretException("The cluster CA certificate Secret is missing");
             }

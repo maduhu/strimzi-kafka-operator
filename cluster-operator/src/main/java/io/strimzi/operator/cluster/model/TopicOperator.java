@@ -234,7 +234,7 @@ public class TopicOperator extends AbstractModel {
             result.setLogging(tcConfig.getLogging());
             result.setResources(tcConfig.getResources());
             result.setUserAffinity(tcConfig.getAffinity());
-            result.generateCertificates(certManager, secrets);
+            result.generateCertificates(certManager, kafkaAssembly, secrets);
             result.setTlsSidecar(tcConfig.getTlsSidecar());
         } else {
             result = null;
@@ -244,11 +244,11 @@ public class TopicOperator extends AbstractModel {
 
     /**
      * Manage certificates generation based on those already present in the Secrets
-     *
-     * @param certManager CertManager instance for handling certificates creation
+     *  @param certManager CertManager instance for handling certificates creation
+     * @param kafkaAssembly
      * @param secrets The Secrets storing certificates
      */
-    public void generateCertificates(CertManager certManager, List<Secret> secrets) {
+    public void generateCertificates(CertManager certManager, Kafka kafka, List<Secret> secrets) {
         log.debug("Generating certificates");
 
         try {
@@ -273,7 +273,8 @@ public class TopicOperator extends AbstractModel {
                     sbj.setCommonName(TopicOperator.topicOperatorName(cluster));
 
                     certManager.generateCsr(keyFile, csrFile, sbj);
-                    certManager.generateCert(csrFile, clusterCA.key(), clusterCA.cert(), certFile, CERTS_EXPIRATION_DAYS);
+                    certManager.generateCert(csrFile, clusterCA.key(), clusterCA.cert(),
+                            certFile, ModelUtils.getCertificateValidity(kafka));
 
                     cert = new CertAndKey(Files.readAllBytes(keyFile.toPath()), Files.readAllBytes(certFile.toPath()));
                 } else {
