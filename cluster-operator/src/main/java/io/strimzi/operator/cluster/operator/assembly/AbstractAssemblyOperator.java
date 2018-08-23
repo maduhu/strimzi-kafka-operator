@@ -24,6 +24,7 @@ import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.ResourceType;
 import io.strimzi.operator.common.operator.resource.AbstractWatchableResourceOperator;
 import io.strimzi.operator.common.operator.resource.SecretOperator;
+
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -32,13 +33,7 @@ import io.vertx.core.shareddata.Lock;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.util.Base64;
-import java.util.Date;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -167,20 +162,6 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
                     log.debug("{}: End generating cluster CA {}", reconciliation, clusterCaName);
                 } else {
                     log.debug("{}: The cluster CA {} already exists", reconciliation, clusterCaName);
-                    Base64.Decoder decoder = Base64.getDecoder();
-                    byte[] bytes = decoder.decode(secret.getData().get("cluster-ca.crt"));
-                    CertificateFactory factory = CertificateFactory.getInstance("X.509");
-                    Certificate certificate = factory.generateCertificate(new ByteArrayInputStream(bytes));
-                    if (certificate instanceof X509Certificate) {
-                        Date notBefore = ((X509Certificate) certificate).getNotBefore();
-                        Date notAfter = ((X509Certificate) certificate).getNotAfter();
-                        long now = System.currentTimeMillis();
-                        boolean afterCertStart = now > notBefore.getTime();
-                        long msTillExpired = notAfter.getTime() - now;
-                        if (afterCertStart && msTillExpired < threshold) {
-
-                        }
-                    }
                     secret = secretCertProvider.createSecret(reconciliation.namespace(), clusterCaName,
                             clusterCa.getData(), labels.toMap());
                 }
