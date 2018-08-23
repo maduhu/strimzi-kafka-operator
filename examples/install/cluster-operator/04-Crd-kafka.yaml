@@ -1243,6 +1243,17 @@ spec:
                             memory:
                               type: string
                               pattern: '[0-9]+([kKmMgGtTpPeE]i?)?$'
+            tlsCertificates:
+              type: object
+              properties:
+                generateCertificateAuthority:
+                  type: boolean
+                renewalDays:
+                  type: integer
+                  minimum: 1
+                validityDays:
+                  type: integer
+                  minimum: 1
           required:
           - kafka
           - zookeeper
