@@ -16,13 +16,12 @@ import io.strimzi.api.kafka.model.DoneableKafka;
 import io.strimzi.api.kafka.KafkaAssemblyList;
 import io.strimzi.api.kafka.model.ExternalLogging;
 import io.strimzi.api.kafka.model.Kafka;
+import io.strimzi.api.kafka.model.TlsCertificates;
 import io.strimzi.certs.CertManager;
-import io.strimzi.certs.Subject;
 import io.strimzi.operator.cluster.model.EntityOperator;
 import io.strimzi.operator.cluster.model.EntityTopicOperator;
 import io.strimzi.operator.cluster.model.EntityUserOperator;
 import io.strimzi.operator.cluster.model.KafkaCluster;
-import io.strimzi.operator.cluster.model.ModelUtils;
 import io.strimzi.operator.cluster.model.TopicOperator;
 import io.strimzi.operator.cluster.model.ZookeeperCluster;
 import io.strimzi.operator.cluster.operator.resource.KafkaSetOperator;
@@ -39,7 +38,6 @@ import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.strimzi.operator.common.operator.resource.RoleBindingOperator;
 import io.strimzi.operator.common.operator.resource.ServiceAccountOperator;
 import io.strimzi.operator.common.operator.resource.ServiceOperator;
-
 import io.vertx.core.AsyncResult;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
@@ -48,8 +46,6 @@ import io.vertx.core.Vertx;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -384,10 +380,6 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
         }
     }
 
-    @Override
-    protected void generateClusterCa(Kafka kafka, File clusterCAkeyFile, File clusterCAcertFile, Subject sbj) throws IOException {
-        certManager.generateSelfSignedCert(clusterCAkeyFile, clusterCAcertFile, sbj, ModelUtils.getCertificateValidity(kafka));
-    }
 
     private final Future<KafkaClusterDescription> getKafkaClusterDescription(Kafka kafkaAssembly, List<Secret> assemblySecrets) {
         Future<KafkaClusterDescription> fut = Future.future();
@@ -760,6 +752,12 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                 .compose(i -> deleteZk(reconciliation))
                 .compose(ar -> f.complete(), f);
     }
+
+    @Override
+    protected TlsCertificates tlsCertificates(Kafka cr) {
+        return cr.getSpec() != null ? cr.getSpec().getTlsCertificates() : null;
+    }
+
 
     @Override
     protected List<HasMetadata> getResources(String namespace, Labels selector) {

@@ -26,7 +26,7 @@ public class TlsCertificates implements Serializable {
 
     int validityDays;
     boolean generateCertificateAuthority;
-    long renewalDays;
+    int renewalDays;
 
     @Description("The number of days generated certificates should be valid for. Default is 365.")
     @Minimum(1)
@@ -55,11 +55,11 @@ public class TlsCertificates implements Serializable {
             "When `generateCertificateAuthority` is true, this will cause extra logging at WARN level about the pending certificate expiry. " +
             "Default is 30.")
     @Minimum(1)
-    public long getRenewalDays() {
+    public int getRenewalDays() {
         return renewalDays;
     }
 
-    public void setRenewalDays(long renewalDays) {
+    public void setRenewalDays(int renewalDays) {
         this.renewalDays = renewalDays;
     }
 }

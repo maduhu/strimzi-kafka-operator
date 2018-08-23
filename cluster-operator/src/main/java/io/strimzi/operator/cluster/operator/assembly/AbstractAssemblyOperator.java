@@ -14,17 +14,18 @@ import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.kubernetes.client.dsl.Resource;
+import io.strimzi.api.kafka.model.TlsCertificates;
 import io.strimzi.certs.CertManager;
 import io.strimzi.certs.SecretCertProvider;
 import io.strimzi.certs.Subject;
 import io.strimzi.operator.cluster.InvalidConfigParameterException;
 import io.strimzi.operator.cluster.model.AbstractModel;
+import io.strimzi.operator.cluster.model.ModelUtils;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.ResourceType;
 import io.strimzi.operator.common.operator.resource.AbstractWatchableResourceOperator;
 import io.strimzi.operator.common.operator.resource.SecretOperator;
-
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -33,12 +34,27 @@ import io.vertx.core.shareddata.Lock;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.util.Base64;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -127,59 +143,138 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
         return null;
     }
 
-    private final void reconcileClusterCa(Reconciliation reconciliation, Labels labels, T cr, Handler<AsyncResult<Void>> handler) {
-        vertx.createSharedWorkerExecutor("kubernetes-ops-pool").executeBlocking(
+    /**
+     * Asynchronously reconciles the cluster CA secret.
+     * The secret has have the name determined by {@link AbstractModel#getClusterCaName(String)}.
+     * Within the secret the current certificate is stored under the key {@code cluster-ca.crt}
+     * and the current key is stored under the key {@code cluster-ca.crt}.
+     * Old certificates which are still within their validity are stored under keys named like {@code cluster-ca-<not-after-date>.crt}, where
+     * {@code <not-after-date>} is the ISO 8601-formatted date of the certificates "notAfter" attribute.
+     * Likewise, the corresponding keys are stored under keys named like {@code cluster-ca-<not-after-date>.key}.
+     * @param reconciliation The reconciliation
+     * @param labels The labels
+     * @param tlsCertificates TLS Certificate configuration
+     * @param handler The handler
+     */
+    private final void reconcileClusterCa(Reconciliation reconciliation, Labels labels,
+                                          TlsCertificates tlsCertificates, Handler<AsyncResult<Secret>> handler) {
+        vertx.createSharedWorkerExecutor("kubernetes-ops-pool").<Secret>executeBlocking(
             future -> {
-                String clusterCaName = AbstractModel.getClusterCaName(reconciliation.name());
-                Secret clusterCa = secretOperations.get(reconciliation.namespace(), clusterCaName);
-                SecretCertProvider secretCertProvider = new SecretCertProvider();
-                Secret secret = null;
+                try {
+                    String clusterCaName = AbstractModel.getClusterCaName(reconciliation.name());
+                    Secret clusterCa = secretOperations.get(reconciliation.namespace(), clusterCaName);
+                    SecretCertProvider secretCertProvider = new SecretCertProvider();
+                    Secret secret;
+                    String certKey = "cluster-ca.crt";
+                    String keyKey = "cluster-ca.key";
+                    X509Certificate cert = cert(clusterCa, certKey);
+                    if (clusterCa == null || certNeedsRenewal(tlsCertificates, cert)) {
+                        log.debug("{}: Generating cluster CA certificate {}", reconciliation, clusterCaName);
+                        File clusterCAkeyFile = null;
+                        File clusterCAcertFile = null;
+                        Map<String, String> data;
+                        try {
+                            clusterCAkeyFile = File.createTempFile("tls", "cluster-ca-key");
+                            clusterCAcertFile = File.createTempFile("tls", "cluster-ca-cert");
 
-                if (clusterCa == null) {
-                    log.debug("{}: Generating cluster CA certificate {}", reconciliation, clusterCaName);
-                    File clusterCAkeyFile = null;
-                    File clusterCAcertFile = null;
-                    try {
-                        clusterCAkeyFile = File.createTempFile("tls", "cluster-ca-key");
-                        clusterCAcertFile = File.createTempFile("tls", "cluster-ca-cert");
+                            Subject sbj = new Subject();
+                            sbj.setOrganizationName("io.strimzi");
+                            sbj.setCommonName("cluster-ca");
 
-                        Subject sbj = new Subject();
-                        sbj.setOrganizationName("io.strimzi");
-                        sbj.setCommonName("cluster-ca");
+                            generateClusterCa(tlsCertificates, clusterCAkeyFile, clusterCAcertFile, sbj);
 
-                        generateClusterCa(cr, clusterCAkeyFile, clusterCAcertFile, sbj);
-
+                            data = new HashMap<>();
+                            if (cert != null) {
+                                // Remove old certificates which have expired
+                                Iterator<String> iter = clusterCa.getData().keySet().iterator();
+                                while (iter.hasNext()) {
+                                    Pattern pattern = Pattern.compile("cluster-ca-" + "([0-9T:-]).(crt|key)");
+                                    Matcher matcher = pattern.matcher(iter.next());
+                                    if (matcher.matches()
+                                        && DateTimeFormatter.ISO_DATE_TIME.parse(matcher.group(1), Instant::from).isAfter(Instant.now())) {
+                                        iter.remove();
+                                    }
+                                }
+                                // Add the current certificate as an old certificate
+                                String notAfterDate = DateTimeFormatter.ISO_DATE_TIME.format(cert.getNotAfter().toInstant());
+                                data.put("cluster-ca-" + notAfterDate + ".crt", data.get(certKey));
+                                data.put("cluster-ca-" + notAfterDate + ".key", data.get(keyKey));
+                            }
+                            // Add the generated certificate as the current certificate
+                            data.put(certKey, base64Contents(clusterCAcertFile));
+                            data.put(keyKey, base64Contents(clusterCAkeyFile));
+                        } finally {
+                            if (clusterCAkeyFile != null)
+                                clusterCAkeyFile.delete();
+                            if (clusterCAcertFile != null)
+                                clusterCAcertFile.delete();
+                        }
                         secret = secretCertProvider.createSecret(reconciliation.namespace(), clusterCaName,
-                                "cluster-ca.key", "cluster-ca.crt",
-                                clusterCAkeyFile, clusterCAcertFile, labels.toMap());
-                    } catch (Throwable e) {
-                        future.fail(e);
-                    } finally {
-                        if (clusterCAkeyFile != null)
-                            clusterCAkeyFile.delete();
-                        if (clusterCAcertFile != null)
-                            clusterCAcertFile.delete();
+                                data, labels.toMap());
+                        log.debug("{}: End generating cluster CA {}", reconciliation, clusterCaName);
+                    } else {
+                        log.debug("{}: The cluster CA {} already exists and does not need renewing", reconciliation, clusterCaName);
+                        secret = secretCertProvider.createSecret(reconciliation.namespace(), clusterCaName,
+                                clusterCa.getData(), labels.toMap());
                     }
-                    log.debug("{}: End generating cluster CA {}", reconciliation, clusterCaName);
-                } else {
-                    log.debug("{}: The cluster CA {} already exists", reconciliation, clusterCaName);
-                    secret = secretCertProvider.createSecret(reconciliation.namespace(), clusterCaName,
-                            clusterCa.getData(), labels.toMap());
-                }
 
-                secretOperations.reconcile(reconciliation.namespace(), clusterCaName, secret)
-                        .compose(future::complete, future);
+                    secretOperations.reconcile(reconciliation.namespace(), clusterCaName, secret)
+                            .compose(result -> future.complete(secret), future);
+                } catch (Throwable e) {
+                    future.fail(e);
+                }
             }, true,
-            res -> {
-                if (res.succeeded())
-                    handler.handle(Future.succeededFuture());
-                else
-                    handler.handle(Future.failedFuture(res.cause()));
-            }
-        );
+                handler);
     }
 
-    protected abstract void generateClusterCa(T cr, File clusterCAkeyFile, File clusterCAcertFile, Subject sbj) throws IOException;
+    private String base64Contents(File file) throws IOException {
+        //String s = new String(Files.readAllBytes(file.toPath()), StandardCharsets.ISO_8859_1);
+        //System.err.println(s);
+        //return s;
+        return Base64.getEncoder().encodeToString(Files.readAllBytes(file.toPath()));
+    }
+
+    private boolean certNeedsRenewal(TlsCertificates tlsCertificates, X509Certificate cert)  {
+        Date notAfter;
+        try {
+            notAfter = cert.getNotAfter();
+        } catch (IllegalStateException e) {
+            return true;
+        }
+        long now = System.currentTimeMillis();
+        long msTillExpired = notAfter.getTime() - now;
+        return msTillExpired / (24L * 60L * 60L * 1000L) < ModelUtils.getRenewalDays(tlsCertificates);
+    }
+
+    private X509Certificate cert(Secret secret, String key)  {
+        if (secret == null || secret.getData().get(key) == null) {
+            return null;
+        }
+        Base64.Decoder decoder = Base64.getDecoder();
+        byte[] bytes = decoder.decode(secret.getData().get(key));
+        CertificateFactory factory = null;
+        try {
+            factory = CertificateFactory.getInstance("X.509");
+        } catch (CertificateException e) {
+            throw new RuntimeException("No security provider with support for X.509 certificates", e);
+        }
+        try {
+            Certificate certificate = factory.generateCertificate(new ByteArrayInputStream(bytes));
+            if (certificate instanceof X509Certificate) {
+                return (X509Certificate) certificate;
+            } else {
+                throw new IllegalStateException("Certificate in key " + key + " of secret " + secret.getMetadata().getName() + " is not an X509Certificate");
+            }
+        } catch (CertificateException e) {
+            throw new IllegalStateException("Certificate in key " + key + " of secret " + secret.getMetadata().getName() + " could not be parsed");
+        }
+    }
+
+    private void generateClusterCa(TlsCertificates tlsCertificates, File clusterCAkeyFile, File clusterCAcertFile, Subject sbj) throws IOException {
+        certManager.generateSelfSignedCert(clusterCAkeyFile, clusterCAcertFile, sbj, ModelUtils.getCertificateValidity(tlsCertificates));
+    }
+
+    protected abstract TlsCertificates tlsCertificates(T cr);
 
     private final void deleteClusterCa(Reconciliation reconciliation, Handler<AsyncResult<Void>> handler) {
         vertx.createSharedWorkerExecutor("kubernetes-ops-pool").executeBlocking(
@@ -230,13 +325,11 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
                     if (cr != null) {
                         log.info("{}: Assembly {} should be created or updated", reconciliation, assemblyName);
                         Labels caLabels = Labels.userLabels(cr.getMetadata().getLabels()).withKind(reconciliation.type().toString()).withCluster(reconciliation.name());
-                        reconcileClusterCa(reconciliation, caLabels, cr, certResult -> {
-
-                            Labels labels = Labels.forCluster(assemblyName);
-                            List<Secret> secrets = secretOperations.list(namespace, labels);
-                            secrets.add(secretOperations.get(namespace, AbstractModel.getClusterCaName(assemblyName)));
-
+                        reconcileClusterCa(reconciliation, caLabels, tlsCertificates(cr), certResult -> {
                             if (certResult.succeeded()) {
+                                Labels labels = Labels.forCluster(assemblyName);
+                                List<Secret> secrets = secretOperations.list(namespace, labels);
+                                secrets.add(certResult.result());
                                 createOrUpdate(reconciliation, cr, secrets, createResult -> {
                                     lock.release();
                                     log.debug("{}: Lock {} released", reconciliation, lockName);
