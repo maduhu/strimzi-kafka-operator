@@ -97,9 +97,9 @@ public class KafkaUserModel {
     public Secret generateSecret()  {
         if (authentication != null && authentication.getType().equals(KafkaUserTlsClientAuthentication.TYPE_TLS)) {
             Map<String, String> data = new HashMap<>();
-            data.put("ca.crt", Base64.getEncoder().encodeToString(caCertAndKey.cert()));
-            data.put("user.key", Base64.getEncoder().encodeToString(userCertAndKey.key()));
-            data.put("user.crt", Base64.getEncoder().encodeToString(userCertAndKey.cert()));
+            data.put("ca.crt", caCertAndKey.certAsBase64String());
+            data.put("user.key", userCertAndKey.keyAsBase64String());
+            data.put("user.crt", userCertAndKey.certAsBase64String());
             return createSecret(data);
         } else {
             return null;

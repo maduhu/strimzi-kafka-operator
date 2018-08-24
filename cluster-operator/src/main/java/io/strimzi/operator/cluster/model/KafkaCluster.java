@@ -393,8 +393,8 @@ public class KafkaCluster extends AbstractModel {
      */
     public Secret generateClientsCASecret() {
         Map<String, String> data = new HashMap<>();
-        data.put("clients-ca.key", Base64.getEncoder().encodeToString(clientsCA.key()));
-        data.put("clients-ca.crt", Base64.getEncoder().encodeToString(clientsCA.cert()));
+        data.put("clients-ca.key", clientsCA.keyAsBase64String());
+        data.put("clients-ca.crt", clientsCA.certAsBase64String());
         return createSecret(KafkaCluster.clientsCASecretName(cluster), data);
     }
 
@@ -428,15 +428,14 @@ public class KafkaCluster extends AbstractModel {
      * @return The generated Secret
      */
     public Secret generateBrokersSecret() {
-        Base64.Encoder encoder = Base64.getEncoder();
 
         Map<String, String> data = new HashMap<>();
-        data.put("cluster-ca.crt", encoder.encodeToString(clusterCA.cert()));
+        data.put("cluster-ca.crt", clusterCA.certAsBase64String());
 
         for (int i = 0; i < replicas; i++) {
             CertAndKey cert = brokerCerts.get(KafkaCluster.kafkaPodName(cluster, i));
-            data.put(KafkaCluster.kafkaPodName(cluster, i) + ".key", encoder.encodeToString(cert.key()));
-            data.put(KafkaCluster.kafkaPodName(cluster, i) + ".crt", encoder.encodeToString(cert.cert()));
+            data.put(KafkaCluster.kafkaPodName(cluster, i) + ".key", cert.keyAsBase64String());
+            data.put(KafkaCluster.kafkaPodName(cluster, i) + ".crt", cert.certAsBase64String());
         }
         return createSecret(KafkaCluster.brokersSecretName(cluster), data);
     }

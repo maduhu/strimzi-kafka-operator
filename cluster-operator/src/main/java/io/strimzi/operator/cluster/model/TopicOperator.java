@@ -414,9 +414,9 @@ public class TopicOperator extends AbstractModel {
      */
     public Secret generateSecret() {
         Map<String, String> data = new HashMap<>();
-        data.put("cluster-ca.crt", Base64.getEncoder().encodeToString(clusterCA.cert()));
-        data.put("entity-operator.key", Base64.getEncoder().encodeToString(cert.key()));
-        data.put("entity-operator.crt", Base64.getEncoder().encodeToString(cert.cert()));
+        data.put("cluster-ca.crt", clusterCA.certAsBase64String());
+        data.put("entity-operator.key", cert.keyAsBase64String());
+        data.put("entity-operator.crt", cert.certAsBase64String());
         return createSecret(TopicOperator.secretName(cluster), data);
     }
 

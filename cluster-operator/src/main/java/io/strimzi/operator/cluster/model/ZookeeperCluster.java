@@ -253,15 +253,14 @@ public class ZookeeperCluster extends AbstractModel {
      * @return The generated Secret
      */
     public Secret generateNodesSecret() {
-        Base64.Encoder encoder = Base64.getEncoder();
 
         Map<String, String> data = new HashMap<>();
-        data.put("cluster-ca.crt", encoder.encodeToString(clusterCA.cert()));
+        data.put("cluster-ca.crt", clusterCA.certAsBase64String());
 
         for (int i = 0; i < replicas; i++) {
             CertAndKey cert = certs.get(ZookeeperCluster.zookeeperPodName(cluster, i));
-            data.put(ZookeeperCluster.zookeeperPodName(cluster, i) + ".key", encoder.encodeToString(cert.key()));
-            data.put(ZookeeperCluster.zookeeperPodName(cluster, i) + ".crt", encoder.encodeToString(cert.cert()));
+            data.put(ZookeeperCluster.zookeeperPodName(cluster, i) + ".key", cert.keyAsBase64String());
+            data.put(ZookeeperCluster.zookeeperPodName(cluster, i) + ".crt", cert.certAsBase64String());
         }
         return createSecret(ZookeeperCluster.nodesSecretName(cluster), data);
     }
