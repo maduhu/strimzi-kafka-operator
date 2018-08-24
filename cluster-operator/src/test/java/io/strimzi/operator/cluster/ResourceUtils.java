@@ -103,30 +103,27 @@ public class ResourceUtils {
         List<Secret> secrets = new ArrayList<>();
 
         secrets.add(
-                new SecretBuilder()
-                .withNewMetadata()
-                    .withName(AbstractModel.getClusterCaName(clusterName))
-                    .withNamespace(clusterCmNamespace)
-                .endMetadata()
-                .addToData("cluster-ca.key", MockCertManager.clusterCaKey())
-                .addToData("cluster-ca.crt", MockCertManager.clusterCaCert())
-                .build()
+                createInitialClusterCaSecret(clusterCmNamespace, clusterName, MockCertManager.clusterCaKey(), MockCertManager.clusterCaCert())
         );
         return secrets;
+    }
+
+    public static Secret createInitialClusterCaSecret(String clusterCmNamespace, String clusterName, String caKey, String caCert) {
+        return new SecretBuilder()
+        .withNewMetadata()
+            .withName(AbstractModel.getClusterCaName(clusterName))
+            .withNamespace(clusterCmNamespace)
+        .endMetadata()
+        .addToData("cluster-ca.key", caKey)
+        .addToData("cluster-ca.crt", caCert)
+        .build();
     }
 
     public static List<Secret> createKafkaClusterSecretsWithReplicas(String clusterCmNamespace, String clusterName, int kafkaReplicas, int zkReplicas) {
         List<Secret> secrets = new ArrayList<>();
 
         secrets.add(
-                new SecretBuilder()
-                        .withNewMetadata()
-                        .withName(AbstractModel.getClusterCaName(clusterName))
-                        .withNamespace(clusterCmNamespace)
-                        .endMetadata()
-                        .addToData("cluster-ca.key", MockCertManager.clusterCaKey())
-                        .addToData("cluster-ca.crt", MockCertManager.clusterCaCert())
-                        .build()
+                createInitialClusterCaSecret(clusterCmNamespace, clusterName, MockCertManager.clusterCaKey(), MockCertManager.clusterCaCert())
         );
 
         secrets.add(
