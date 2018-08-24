@@ -928,6 +928,17 @@ spec:
                       type: string
                     type:
                       type: string
+            tlsCertificates:
+              type: object
+              properties:
+                generateCertificateAuthority:
+                  type: boolean
+                validityDays:
+                  type: integer
+                  minimum: 1
+                renewalDays:
+                  type: integer
+                  minimum: 1
             entityOperator:
               type: object
               properties:
@@ -1243,17 +1254,6 @@ spec:
                             memory:
                               type: string
                               pattern: '[0-9]+([kKmMgGtTpPeE]i?)?$'
-            tlsCertificates:
-              type: object
-              properties:
-                generateCertificateAuthority:
-                  type: boolean
-                renewalDays:
-                  type: integer
-                  minimum: 1
-                validityDays:
-                  type: integer
-                  minimum: 1
           required:
           - kafka
           - zookeeper
