@@ -723,7 +723,7 @@ public class StrimziRunner extends BlockJUnit4ClassRunner {
                 }
             }
 
-            if (f.getName().matches(".*ClusterRoleBinding.*")) {
+            if (f.getName().matches(".*RoleBinding.*")) {
                 String ns = annotations(element, Namespace.class).get(0).value();
                 ArrayNode subjects = (ArrayNode) node.get("subjects");
                 ObjectNode subject = (ObjectNode) subjects.get(0);
