@@ -35,7 +35,9 @@ import java.util.Map;
 
 import static io.strimzi.test.TestUtils.set;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -99,10 +101,42 @@ public class CertificateRenewalTest {
     }
 
     @Test
-    public void noCertsGetGeneratedOutsideRenewalPeriod(TestContext context) throws IOException {
+    public void certsGetGeneratedInitiallyAuto(TestContext context) throws IOException {
         TlsCertificates tlsCertificates = new TlsCertificatesBuilder()
                 .withValidityDays(100)
                 .withRenewalDays(10)
+                .withGenerateCertificateAuthority(true)
+                .build();
+        Secret initialSecret = null;
+        ArgumentCaptor<Secret> c = reconcileCa(context, tlsCertificates, initialSecret);
+        assertEquals(set("cluster-ca.key", "cluster-ca.crt"), c.getValue().getData().keySet());
+        assertNotNull(c.getValue().getData().get("cluster-ca.key"));
+        assertNotNull(c.getValue().getData().get("cluster-ca.crt"));
+    }
+
+    @Test
+    public void certsNotGeneratedInitiallyManual(TestContext context) throws IOException {
+        TlsCertificates tlsCertificates = new TlsCertificatesBuilder()
+                .withValidityDays(100)
+                .withRenewalDays(10)
+                .withGenerateCertificateAuthority(false)
+                .build();
+        Secret initialSecret = null;
+        ArgumentCaptor<Secret> c = reconcileCa(context, tlsCertificates, initialSecret);
+        assertTrue(c.getValue().getData().isEmpty());
+        // XXX It would be nice to be able to assert on the WARN log message
+    }
+
+    @Test
+    public void noCertsGetGeneratedOutsideRenewalPeriodAuto(TestContext context) throws IOException {
+        noCertsGetGeneratedOutsideRenewalPeriod(context, true);
+    }
+
+    private void noCertsGetGeneratedOutsideRenewalPeriod(TestContext context, boolean generateCertificateAuthority) throws IOException {
+        TlsCertificates tlsCertificates = new TlsCertificatesBuilder()
+                .withValidityDays(100)
+                .withRenewalDays(10)
+                .withGenerateCertificateAuthority(generateCertificateAuthority)
                 .build();
         Secret initialSecret = initialSecret(tlsCertificates);
         ArgumentCaptor<Secret> c = reconcileCa(context, tlsCertificates, initialSecret);
@@ -112,26 +146,36 @@ public class CertificateRenewalTest {
     }
 
     @Test
-    public void newCertsGetGeneratedWhenInRenewalPeriod(TestContext context) throws IOException {
+    public void noCertsGetGeneratedOutsideRenewalPeriodManual(TestContext context) throws IOException {
+        noCertsGetGeneratedOutsideRenewalPeriod(context, false);
+    }
+
+    @Test
+    public void newCertsGetGeneratedWhenInRenewalPeriodAuto(TestContext context) throws IOException {
         TlsCertificates tlsCertificates = new TlsCertificatesBuilder()
                 .withValidityDays(2)
                 .withRenewalDays(3)
+                .withGenerateCertificateAuthority(true)
                 .build();
         Secret initialSecret = initialSecret(tlsCertificates);
         ArgumentCaptor<Secret> c = reconcileCa(context, tlsCertificates, initialSecret);
         Map<String, String> data = c.getValue().getData();
         assertEquals(4, data.size());
-        assertNotNull(data.remove("cluster-ca.crt"));
-        assertNotNull(data.remove("cluster-ca.key"));
+        String expectedNewCrt = data.remove("cluster-ca.crt");
+        assertNotNull(expectedNewCrt);
+        String expectedNewKey = data.remove("cluster-ca.key");
+        assertNotNull(expectedNewKey);
         Iterator<String> iterator = data.keySet().iterator();
         String key = iterator.next();
         if (key.endsWith(".crt")) {
             assertEquals("Expected the original crt to be in the data key with expiry date",
                     initialSecret.getData().get("cluster-ca.crt"), data.get(key));
+            assertNotEquals(expectedNewCrt, data.get(key));
             assertEquals(key.replaceAll(".crt$", ".key"), iterator.next());
         } else if (key.endsWith(".key")) {
             assertEquals("Expected the original key to be in the data key with expiry date",
                     initialSecret.getData().get("cluster-ca.key"), data.get(key));
+            assertNotEquals(expectedNewKey, data.get(key));
             assertEquals(key.replaceAll(".key$", ".crt"), iterator.next());
         } else {
             fail();
@@ -139,10 +183,24 @@ public class CertificateRenewalTest {
     }
 
     @Test
-    public void expiredCertsGetRemoved(TestContext context) throws IOException {
+    public void newCertsNotGeneratedWhenInRenewalPeriodManual(TestContext context) throws IOException {
+        TlsCertificates tlsCertificates = new TlsCertificatesBuilder()
+                .withValidityDays(2)
+                .withRenewalDays(3)
+                .withGenerateCertificateAuthority(false)
+                .build();
+        Secret initialSecret = initialSecret(tlsCertificates);
+        ArgumentCaptor<Secret> c = reconcileCa(context, tlsCertificates, initialSecret);
+        Map<String, String> data = c.getValue().getData();
+        assertEquals(initialSecret.getData(), data);
+    }
+
+    @Test
+    public void expiredCertsGetRemovedAuto(TestContext context) throws IOException {
         TlsCertificates tlsCertificates = new TlsCertificatesBuilder()
                 .withValidityDays(100)
                 .withRenewalDays(10)
+                .withGenerateCertificateAuthority(true)
                 .build();
         Secret initialSecret = initialSecret(tlsCertificates);
         initialSecret.getData().put("cluster-ca-2018-07-01T09:00:00.crt", "whatever");
@@ -152,5 +210,20 @@ public class CertificateRenewalTest {
         assertEquals(data.keySet().toString(), 2, data.size());
         assertEquals(initialSecret.getData().get("cluster-ca.crt"), data.get("cluster-ca.crt"));
         assertEquals(initialSecret.getData().get("cluster-ca.key"), data.get("cluster-ca.key"));
+    }
+
+    @Test
+    public void expiredCertsNotRemovedManual(TestContext context) throws IOException {
+        TlsCertificates tlsCertificates = new TlsCertificatesBuilder()
+                .withValidityDays(100)
+                .withRenewalDays(10)
+                .withGenerateCertificateAuthority(false)
+                .build();
+        Secret initialSecret = initialSecret(tlsCertificates);
+        initialSecret.getData().put("cluster-ca-2018-07-01T09:00:00.crt", "whatever");
+        initialSecret.getData().put("cluster-ca-2018-07-01T09:00:00.key", "whatever");
+        ArgumentCaptor<Secret> c = reconcileCa(context, tlsCertificates, initialSecret);
+        Map<String, String> data = c.getValue().getData();
+        assertEquals(initialSecret.getData(), data);
     }
 }

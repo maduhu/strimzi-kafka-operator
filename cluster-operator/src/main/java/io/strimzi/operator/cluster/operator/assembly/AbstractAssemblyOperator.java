@@ -46,7 +46,6 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -57,6 +56,8 @@ import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import static java.util.Collections.emptyMap;
 
 /**
  * <p>Abstract assembly creation, update, read, deletion, etc.</p>
@@ -74,6 +75,8 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
 
     protected static final int LOCK_TIMEOUT_MS = 10000;
     protected static final int CERTS_EXPIRATION_DAYS = 365;
+    public static final String CLUSTER_CA_CRT = "cluster-ca.crt";
+    public static final String CLUSTER_CA_KEY = "cluster-ca.key";
 
     protected final Vertx vertx;
     protected final boolean isOpenShift;
@@ -166,60 +169,19 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
                     Secret clusterCa = secretOperations.get(reconciliation.namespace(), clusterCaName);
                     SecretCertProvider secretCertProvider = new SecretCertProvider();
                     Secret secret;
-                    String certKey = "cluster-ca.crt";
-                    String keyKey = "cluster-ca.key";
-                    X509Certificate cert = cert(clusterCa, certKey);
+                    X509Certificate currentCert = cert(clusterCa, CLUSTER_CA_CRT);
+                    boolean needsRenewal = currentCert != null && certNeedsRenewal(tlsCertificates, currentCert);
                     final Map<String, String> newData;
-                    if (clusterCa == null || certNeedsRenewal(tlsCertificates, cert)) {
-                        log.debug("{}: Generating cluster CA certificate {}", reconciliation, clusterCaName);
-                        File clusterCAkeyFile = null;
-                        File clusterCAcertFile = null;
-                        Map<String, String> data;
-                        try {
-                            clusterCAkeyFile = File.createTempFile("tls", "cluster-ca-key");
-                            clusterCAcertFile = File.createTempFile("tls", "cluster-ca-cert");
-
-                            Subject sbj = new Subject();
-                            sbj.setOrganizationName("io.strimzi");
-                            sbj.setCommonName("cluster-ca");
-                            certManager.generateSelfSignedCert(clusterCAkeyFile, clusterCAcertFile, sbj, ModelUtils.getCertificateValidity(tlsCertificates));
-
-                            data = new HashMap<>();
-                            if (cert != null) {
-                                // Add the current certificate as an old certificate (with date in UTC)
-                                String notAfterDate = DateTimeFormatter.ISO_DATE_TIME.format(cert.getNotAfter().toInstant().atZone(ZoneId.of("Z")));
-                                data.put("cluster-ca-" + notAfterDate + ".crt", clusterCa.getData().get(certKey));
-                                data.put("cluster-ca-" + notAfterDate + ".key", clusterCa.getData().get(keyKey));
-                            }
-                            // Add the generated certificate as the current certificate
-                            data.put(certKey, base64Contents(clusterCAcertFile));
-                            data.put(keyKey, base64Contents(clusterCAkeyFile));
-                        } finally {
-                            if (clusterCAkeyFile != null)
-                                clusterCAkeyFile.delete();
-                            if (clusterCAcertFile != null)
-                                clusterCAcertFile.delete();
-                        }
-                        newData = data;
-                        log.debug("{}: End generating cluster CA {}", reconciliation, clusterCaName);
+                    if (!tlsCertificates.isGenerateCertificateAuthority()) {
+                        newData = checkProvidedCert(reconciliation, clusterCaName, clusterCa, currentCert, needsRenewal);
                     } else {
-                        log.debug("{}: The cluster CA {} already exists and does not need renewing", reconciliation, clusterCaName);
-                        newData = clusterCa.getData();
-                    }
-                    // Now remove old certificates which have expired
-                    Iterator<String> iter = newData.keySet().iterator();
-                    while (iter.hasNext()) {
-                        Pattern pattern = Pattern.compile("cluster-ca-" + "([0-9T:-]{19}).(crt|key)");
-                        String key = iter.next();
-                        Matcher matcher = pattern.matcher(key);
-
-                        if (matcher.matches()) {
-                            String date = matcher.group(1) + "Z";
-                            Instant parse = DateTimeFormatter.ISO_DATE_TIME.parse(date, Instant::from);
-                            if (parse.isBefore(Instant.now())) {
-                                iter.remove();
-                            }
+                        if (clusterCa == null || needsRenewal) {
+                            newData = createOrRenewCert(reconciliation, tlsCertificates, clusterCaName, clusterCa, currentCert);
+                        } else {
+                            log.debug("{}: The cluster CA {} already exists and does not need renewing", reconciliation, clusterCaName);
+                            newData = clusterCa.getData();
                         }
+                        removeExpiredCerts(newData);
                     }
                     secret = secretCertProvider.createSecret(reconciliation.namespace(), clusterCaName,
                             newData, labels.toMap());
@@ -233,22 +195,83 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
                 handler);
     }
 
+    private void removeExpiredCerts(Map<String, String> newData) {
+        Iterator<String> iter = newData.keySet().iterator();
+        while (iter.hasNext()) {
+            Pattern pattern = Pattern.compile("cluster-ca-" + "([0-9T:-]{19}).(crt|key)");
+            String key = iter.next();
+            Matcher matcher = pattern.matcher(key);
+
+            if (matcher.matches()) {
+                String date = matcher.group(1) + "Z";
+                Instant parse = DateTimeFormatter.ISO_DATE_TIME.parse(date, Instant::from);
+                if (parse.isBefore(Instant.now())) {
+                    iter.remove();
+                }
+            }
+        }
+    }
+
+    private Map<String, String> createOrRenewCert(Reconciliation reconciliation, TlsCertificates tlsCertificates, String clusterCaName, Secret clusterCa, X509Certificate currentCert) throws IOException {
+        Map<String, String> newData;
+        log.debug("{}: Generating cluster CA certificate {}", reconciliation, clusterCaName);
+        File clusterCaKeyFile = null;
+        File clusterCaCertFile = null;
+        Map<String, String> data;
+        try {
+            clusterCaKeyFile = File.createTempFile("tls", "cluster-ca-key");
+            clusterCaCertFile = File.createTempFile("tls", "cluster-ca-currentCert");
+
+            Subject sbj = new Subject();
+            sbj.setOrganizationName("io.strimzi");
+            sbj.setCommonName("cluster-ca");
+            certManager.generateSelfSignedCert(clusterCaKeyFile, clusterCaCertFile, sbj, ModelUtils.getCertificateValidity(tlsCertificates));
+
+            data = new HashMap<>();
+            if (currentCert != null) {
+                // Add the current certificate as an old certificate (with date in UTC)
+                String notAfterDate = DateTimeFormatter.ISO_DATE_TIME.format(currentCert.getNotAfter().toInstant().atZone(ZoneId.of("Z")));
+                data.put("cluster-ca-" + notAfterDate + ".crt", clusterCa.getData().get(CLUSTER_CA_CRT));
+                data.put("cluster-ca-" + notAfterDate + ".key", clusterCa.getData().get(CLUSTER_CA_KEY));
+            }
+            // Add the generated certificate as the current certificate
+            data.put(CLUSTER_CA_CRT, base64Contents(clusterCaCertFile));
+            data.put(CLUSTER_CA_KEY, base64Contents(clusterCaKeyFile));
+        } finally {
+            if (clusterCaKeyFile != null)
+                clusterCaKeyFile.delete();
+            if (clusterCaCertFile != null)
+                clusterCaCertFile.delete();
+        }
+        newData = data;
+        log.debug("{}: End generating cluster CA {}", reconciliation, clusterCaName);
+        return newData;
+    }
+
+    private Map<String, String> checkProvidedCert(Reconciliation reconciliation, String clusterCaName, Secret clusterCa, X509Certificate currentCert, boolean needsRenewal) {
+        Map<String, String> newData;
+        if (needsRenewal) {
+            log.warn("The {} certificate in Secret {} in namespace {} will expire on {} " +
+                            "and it is not configured to automatically renew.",
+                    CLUSTER_CA_CRT, clusterCaName, reconciliation.namespace(), currentCert.getNotAfter());
+        } else if (clusterCa == null) {
+            log.warn("The certificate (data.{}) and key (data.{}) in Secret {} in namespace {} " +
+                            "need to be configured with a Base64 encoded PEM-format certificate. " +
+                            "Alternatively, configure the Kafka resource with name {} in namespace {} for certificate renewal.",
+                    CLUSTER_CA_CRT, CLUSTER_CA_KEY, clusterCaName, reconciliation.namespace(),
+                    reconciliation.name(), reconciliation.namespace());
+        }
+        newData = clusterCa != null ? clusterCa.getData() : emptyMap();
+        return newData;
+    }
+
+    /** The contents of the given file, base64 encoded */
     private String base64Contents(File file) throws IOException {
-        //String s = new String(Files.readAllBytes(file.toPath()), StandardCharsets.ISO_8859_1);
-        //System.err.println(s);
-        //return s;
         return Base64.getEncoder().encodeToString(Files.readAllBytes(file.toPath()));
     }
 
     private boolean certNeedsRenewal(TlsCertificates tlsCertificates, X509Certificate cert)  {
-        Date notAfter;
-        try {
-            notAfter = cert.getNotAfter();
-        } catch (IllegalStateException e) {
-            return true;
-        }
-        long now = System.currentTimeMillis();
-        long msTillExpired = notAfter.getTime() - now;
+        long msTillExpired = cert.getNotAfter().getTime() - System.currentTimeMillis();
         return msTillExpired / (24L * 60L * 60L * 1000L) < ModelUtils.getRenewalDays(tlsCertificates);
     }
 
@@ -269,10 +292,10 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
             if (certificate instanceof X509Certificate) {
                 return (X509Certificate) certificate;
             } else {
-                throw new IllegalStateException("Certificate in key " + key + " of Secret " + secret.getMetadata().getName() + " is not an X509Certificate");
+                throw new RuntimeException("Certificate in key " + key + " of Secret " + secret.getMetadata().getName() + " is not an X509Certificate");
             }
         } catch (CertificateException e) {
-            throw new IllegalStateException("Certificate in key " + key + " of Secret " + secret.getMetadata().getName() + " could not be parsed");
+            throw new RuntimeException("Certificate in key " + key + " of Secret " + secret.getMetadata().getName() + " could not be parsed");
         }
     }
 

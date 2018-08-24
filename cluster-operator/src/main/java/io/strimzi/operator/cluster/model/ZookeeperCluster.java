@@ -185,6 +185,7 @@ public class ZookeeperCluster extends AbstractModel {
      * Manage certificates generation based on those already present in the Secrets
      *
      * @param certManager CertManager instance for handling certificates creation
+     * @param kafka The Kafka CR.
      * @param secrets The Secrets storing certificates
      */
     public void generateCertificates(CertManager certManager, Kafka kafka, List<Secret> secrets) {
