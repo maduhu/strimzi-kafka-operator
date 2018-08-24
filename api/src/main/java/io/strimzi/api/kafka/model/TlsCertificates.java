@@ -5,6 +5,7 @@
 package io.strimzi.api.kafka.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.strimzi.crdgenerator.annotations.Minimum;
 import io.sundr.builder.annotations.Buildable;
@@ -20,12 +21,13 @@ import java.io.Serializable;
         builderPackage = "io.fabric8.kubernetes.api.builder"
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonPropertyOrder({ "generateCertificateAuthority", "validityDays", "renewalDays" })
 public class TlsCertificates implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
     int validityDays;
-    boolean generateCertificateAuthority;
+    boolean generateCertificateAuthority = true;
     int renewalDays;
 
     @Description("The number of days generated certificates should be valid for. Default is 365.")

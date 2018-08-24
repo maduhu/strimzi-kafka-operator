@@ -27,7 +27,7 @@ import java.util.Map;
         builderPackage = "io.fabric8.kubernetes.api.builder"
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@JsonPropertyOrder({ "kafka", "zookeeper", "topicOperator" })
+@JsonPropertyOrder({ "kafka", "zookeeper", "topicOperator", "tlsCertificates"})
 public class KafkaSpec implements Serializable {
 
     private static final long serialVersionUID = 1L;
