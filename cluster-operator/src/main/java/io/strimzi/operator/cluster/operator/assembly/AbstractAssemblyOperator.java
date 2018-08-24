@@ -172,7 +172,7 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
                     X509Certificate currentCert = cert(clusterCa, CLUSTER_CA_CRT);
                     boolean needsRenewal = currentCert != null && certNeedsRenewal(tlsCertificates, currentCert);
                     final Map<String, String> newData;
-                    if (!tlsCertificates.isGenerateCertificateAuthority()) {
+                    if (tlsCertificates != null && !tlsCertificates.isGenerateCertificateAuthority()) {
                         newData = checkProvidedCert(reconciliation, clusterCaName, clusterCa, currentCert, needsRenewal);
                     } else {
                         if (clusterCa == null || needsRenewal) {
@@ -238,10 +238,12 @@ public abstract class AbstractAssemblyOperator<C extends KubernetesClient, T ext
             data.put(CLUSTER_CA_CRT, base64Contents(clusterCaCertFile));
             data.put(CLUSTER_CA_KEY, base64Contents(clusterCaKeyFile));
         } finally {
-            if (clusterCaKeyFile != null)
-                clusterCaKeyFile.delete();
-            if (clusterCaCertFile != null)
-                clusterCaCertFile.delete();
+            if (clusterCaKeyFile != null && !clusterCaKeyFile.delete()) {
+                log.debug("Unable to delete temporary file {}", clusterCaKeyFile);
+            }
+            if (clusterCaCertFile != null && !clusterCaCertFile.delete()) {
+                log.debug("Unable to delete temporary file {}", clusterCaKeyFile);
+            }
         }
         newData = data;
         log.debug("{}: End generating cluster CA {}", reconciliation, clusterCaName);
